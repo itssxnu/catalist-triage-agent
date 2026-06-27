@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Message Triage Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen p-6">
+<div class="max-w-3xl mx-auto space-y-4">
+
+  <div class="bg-white rounded-xl shadow p-6 space-y-3">
+    <h1 class="text-xl font-semibold">Message Triage Dashboard</h1>
+    <p class="text-sm text-slate-500">Send a test message, then check the reply console to review what the AI suggested.</p>
+    <div class="flex gap-2 border-b">
+      <button id="tabSend" class="px-4 py-2 text-sm font-medium border-b-2">Send Test Message</button>
+      <button id="tabReview" class="px-4 py-2 text-sm font-medium border-b-2">Reply Console</button>
+    </div>
+  </div>
+
+  <!-- Send tab -->
+  <div id="sendBox" class="bg-white rounded-xl shadow p-6 space-y-3">
+    <div class="grid grid-cols-4 gap-2" id="channels">
+      <button data-c="WhatsApp" class="cbtn border rounded-lg py-2 text-sm">WhatsApp</button>
+      <button data-c="Instagram" class="cbtn border rounded-lg py-2 text-sm">Instagram</button>
+      <button data-c="Email" class="cbtn border rounded-lg py-2 text-sm">Email</button>
+      <button data-c="Website Form" class="cbtn border rounded-lg py-2 text-sm">Web Form</button>
+    </div>
+    <input id="sender" placeholder="Sender (phone/email)" class="w-full border rounded-lg px-3 py-2 text-sm">
+    <textarea id="msg" rows="4" placeholder="Message text" class="w-full border rounded-lg px-3 py-2 text-sm"></textarea>
+    <button id="sendBtn" class="w-full bg-slate-800 text-white rounded-lg py-2.5 font-medium">Send</button>
+    <p id="sendLog" class="text-sm hidden p-2 rounded-lg"></p>
+  </div>
+
+  <!-- Review tab -->
+  <div id="reviewBox" class="hidden space-y-3">
+    <div class="bg-white rounded-xl shadow p-6">
+      <button id="loadBtn" class="bg-slate-800 text-white rounded-lg px-4 py-2 text-sm">Load Messages</button>
+      <p id="reviewLog" class="text-sm hidden mt-2 p-2 rounded-lg"></p>
+    </div>
+    <div id="cards" class="space-y-3"></div>
+  </div>
+
+</div>
+
+<script>
+// Put your deployed Apps Script Web App URL here before using this page.
+const URL_API = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+
+// --- tabs ---
+const sendBox = document.getElementById('sendBox');
+const reviewBox = document.getElementById('reviewBox');
+const tabSend = document.getElementById('tabSend');
+const tabReview = document.getElementById('tabReview');
+
+function showTab(name) {
+  const isSend = name === 'send';
+  sendBox.classList.toggle('hidden', !isSend);
+  reviewBox.classList.toggle('hidden', isSend);
+  tabSend.classList.toggle('border-slate-800', isSend);
+  tabReview.classList.toggle('border-slate-800', !isSend);
+}
+tabSend.onclick = () => showTab('send');
+tabReview.onclick = () => showTab('review');
+showTab('send');
+
+// --- send tab ---
+let channel = null;
+document.querySelectorAll('.cbtn').forEach(b => {
+  b.onclick = () => {
+    channel = b.dataset.c;
+    document.querySelectorAll('.cbtn').forEach(x => x.classList.remove('bg-slate-800', 'text-white'));
+    b.classList.add('bg-slate-800', 'text-white');
+  };
+});
+
+function setLog(el, text, isError) {
+  el.textContent = text;
+  el.className = 'text-sm p-2 rounded-lg ' + (isError ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700');
+}
+
+document.getElementById('sendBtn').onclick = async () => {
+  const log = document.getElementById('sendLog');
+  const message = document.getElementById('msg').value.trim();
+  const sender = document.getElementById('sender').value.trim();
+  if (!channel) return setLog(log, 'Pick a channel first.', true);
+  if (!message) return setLog(log, 'Type a message first.', true);
+
+  setLog(log, 'Sending...', false);
+  try {
+    const res = await fetch(URL_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ channel, sender, message })
+    });
+    const data = await res.json();
+    if (data.status === 'success') setLog(log, 'Sent and triaged. Check the Reply Console tab.', false);
+    else setLog(log, 'Error: ' + data.message, true);
+  } catch (err) {
+    setLog(log, 'Failed: ' + err.message, true);
+  }
+};
+
+// --- review tab ---
+const urgencyColor = { Urgent: 'bg-red-100 text-red-700', Normal: 'bg-amber-100 text-amber-700', Low: 'bg-slate-100 text-slate-600' };
+
+function badge(text, cls) {
+  return `<span class="text-xs px-2 py-1 rounded-full ${cls || 'bg-slate-100 text-slate-600'}">${text}</span>`;
+}
+
+function makeCard(row) {
+  const done = row.status && row.status !== 'Pending Review' && row.status !== 'AI ERROR';
+  const div = document.createElement('div');
+  div.className = 'bg-white rounded-xl shadow p-5 space-y-2' + (done ? ' opacity-50' : '');
+  div.innerHTML = `
+    <div class="flex justify-between text-xs">
+      <span>${row.channel} - ${row.sender}</span>
+      <div class="flex gap-1">
+        ${badge(row.urgency, urgencyColor[row.urgency])}
+        ${badge(row.leadQuality)}
+        ${row.needsHuman === 'YES' ? badge('Needs human', 'bg-red-100 text-red-700') : ''}
+      </div>
+    </div>
+    <p class="text-sm bg-slate-50 p-2 rounded-lg">${row.message}</p>
+    <textarea class="reply w-full border rounded-lg p-2 text-sm" rows="3" ${done ? 'disabled' : ''}>${row.suggestedReply || ''}</textarea>
+    <div class="flex justify-between items-center">
+      <div class="flex gap-2">
+        <button class="approve text-sm bg-green-600 text-white rounded-lg px-3 py-1" ${done ? 'disabled' : ''}>Approve</button>
+        <button class="reject text-sm bg-red-50 text-red-700 rounded-lg px-3 py-1" ${done ? 'disabled' : ''}>Reject</button>
+      </div>
+      <span class="status text-xs text-slate-500">${row.status || ''}</span>
+    </div>`;
+
+  div.querySelector('.approve').onclick = () => act(row.row, 'Approved & Sent', div);
+  div.querySelector('.reject').onclick = () => act(row.row, 'Rejected', div);
+  return div;
+}
+
+async function act(rowNum, status, div) {
+  const reply = div.querySelector('.reply').value;
+  const statusEl = div.querySelector('.status');
+  statusEl.textContent = 'Saving...';
+  try {
+    const res = await fetch(URL_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'updateStatus', row: rowNum, status, finalReply: reply })
+    });
+    const data = await res.json();
+    if (data.status === 'success') {
+      statusEl.textContent = status;
+      div.classList.add('opacity-50');
+      div.querySelectorAll('button, textarea').forEach(el => el.disabled = true);
+    } else {
+      statusEl.textContent = 'Error';
+    }
+  } catch (err) {
+    statusEl.textContent = 'Error';
+  }
+}
+
+document.getElementById('loadBtn').onclick = async () => {
+  const log = document.getElementById('reviewLog');
+  const cards = document.getElementById('cards');
+  setLog(log, 'Loading...', false);
+  cards.innerHTML = '';
+  try {
+    const res = await fetch(URL_API);
+    const data = await res.json();
+    if (data.status !== 'success') return setLog(log, 'Error: ' + data.message, true);
+    log.classList.add('hidden');
+    data.rows.reverse().forEach(row => cards.appendChild(makeCard(row)));
+  } catch (err) {
+    setLog(log, 'Failed: ' + err.message, true);
+  }
+};
+</script>
+</body>
+</html>
